@@ -16,7 +16,7 @@ from .char_data import (
     FEMALE_ROVER_IDS,
     get_char_attribute,
 )
-from .config import get_bingo_ids
+from .config import get_bingo_ids, get_bingo_layout
 
 sv_bingo = SV("宾果", priority=5)
 
@@ -41,18 +41,23 @@ def _get_stamp_b64() -> str:
 
 
 def _count_lines(owned_grid) -> int:
-    n = 0
-    for r in range(6):
-        if all(owned_grid[r][c] for c in range(6)):
-            n += 1
-    for c in range(6):
-        if all(owned_grid[r][c] for r in range(6)):
-            n += 1
-    if all(owned_grid[i][i] for i in range(6)):
-        n += 1
-    if all(owned_grid[i][5 - i] for i in range(6)):
-        n += 1
-    return n
+    rows = len(owned_grid)
+    columns = len(owned_grid[0]) if rows else 0
+    if not rows or not columns:
+        return 0
+
+    lines = sum(1 for row in owned_grid if all(row))
+    lines += sum(
+        1
+        for column in range(columns)
+        if all(owned_grid[row][column] for row in range(rows))
+    )
+    if rows == columns and rows > 1:
+        if all(owned_grid[index][index] for index in range(rows)):
+            lines += 1
+        if all(owned_grid[index][columns - 1 - index] for index in range(rows)):
+            lines += 1
+    return lines
 
 
 def _badge_for(lines: int) -> str:
@@ -70,7 +75,7 @@ def _badge_for(lines: int) -> str:
 @sv_bingo.on_command(
     ("宾果", "冰果", "冰菓", "五星宾果", "角色宾果", "bingo", "bg"),
     block=True,
-    to_ai="""鸣潮五星角色宾果收集图：把本地已有的角色数据摆进 6x6 棋盘,已拥有的高亮,连成一条线就算收藏家。
+    to_ai="""鸣潮五星角色宾果收集图：把本地已有的角色数据摆进可配置行列的棋盘,已拥有的高亮,连成一条线就算收藏家。
 
 当用户问「宾果 / 五星宾果 / 收集图」时调用,需绑定特征码,角色列表读本地缓存(不额外请求库洛)。
 
@@ -115,7 +120,15 @@ async def cmd_ww_bingo(bot: Bot, ev: Event):
             at_sender=True,
         )
 
-    ids = get_bingo_ids()
+    rows, columns = get_bingo_layout()
+    cell_count = rows * columns
+    ids = get_bingo_ids(cell_count)
+    if len(ids) < cell_count:
+        return await bot.send(
+            f"棋盘需要 {cell_count} 个角色，但当前只能生成 {len(ids)} 个。"
+            "请在 BingoRoleIds 中补充角色ID，或开启随机四星。",
+            at_sender=True,
+        )
 
     attr_icon_cache = {}
 
@@ -159,7 +172,10 @@ async def cmd_ww_bingo(bot: Bot, ev: Event):
         attr_icon = await _attr_icon(get_char_attribute(cid) or "")
         cells.append({"owned": is_owned, "head": head, "attr": attr_icon, "chain": chain})
 
-    owned_grid = [[cells[r * 6 + c]["owned"] for c in range(6)] for r in range(6)]
+    owned_grid = [
+        [cells[row * columns + column]["owned"] for column in range(columns)]
+        for row in range(rows)
+    ]
     lines = _count_lines(owned_grid)
     owned_count = sum(1 for c in cells if c["owned"])
 
@@ -186,6 +202,9 @@ async def cmd_ww_bingo(bot: Bot, ev: Event):
         "nickname": nickname[:12],
         "avatar_url": avatar_url,
         "cells": cells,
+        "rows": rows,
+        "columns": columns,
+        "container_width": max(900, columns * 130 + 80),
         "lines": lines,
         "owned_count": owned_count,
         "total": len(cells),

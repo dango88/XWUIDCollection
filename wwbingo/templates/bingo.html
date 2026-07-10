@@ -17,7 +17,7 @@
   }
 
   .container {
-    width: 900px;
+    width: {{ container_width }}px;
     position: relative;
     overflow: hidden;
     font-family: 'HYWenHei-85W', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
@@ -146,7 +146,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat({{ columns }}, minmax(0, 1fr));
     gap: 10px;
   }
   .cell {
@@ -258,7 +258,7 @@
     </div>
 
     <footer>
-      <div class="stat">图中已拥有 <b>{{ owned_count }}</b> / {{ total }} · 连线 <b>{{ lines }}</b> 条</div>
+      <div class="stat">棋盘 {{ columns }}×{{ rows }} · 已拥有 <b>{{ owned_count }}</b> / {{ total }} · 连线 <b>{{ lines }}</b> 条</div>
       {% if footer_b64 %}<img class="brand" src="{{ footer_b64 }}" alt="">{% endif %}
     </footer>
 
