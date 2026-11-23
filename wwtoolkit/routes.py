@@ -870,7 +870,9 @@ async def matrix_teams(request: Request) -> Response:
                 "buffs": buff_ids,
             }
         )
-    teams.sort(key=lambda x: -x["score"])
+    # 保持游戏内返回的顺序（第1轮 5 队 → 第2轮 6 队 → 第3轮 …）。
+    # 这里曾经按分数降序排过，导致同步后配队顺序与矩阵里看到的完全不一致；
+    # 用户要的是「照矩阵原样铺」，所以不做任何重排。
     mode_name = "奇点扩张" if mode.get("modeId") == 1 else "稳态协议"
     return JSONResponse({"modeName": mode_name, "teams": teams})
 

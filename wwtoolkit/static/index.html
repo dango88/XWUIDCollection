@@ -1456,13 +1456,40 @@ svg{display:block}
   .ax-slot img{width:56px;height:70px;object-fit:cover;object-position:top}
   .ax-slot.full{border-style:solid;color:var(--text);font-size:12px}
   .ax-acts{display:flex;gap:6px;align-items:center}
-  .gp-free{pointer-events:none;background:transparent}.gp-free .dialog{pointer-events:auto}.gp-dialog{.gp-list{display:flex;flex-direction:column;gap:5px;max-height:56vh;overflow:auto;margin:8px 0}.gp-row{display:flex;align-items:center;text-align:left;padding:8px 10px;border:1px solid var(--card-line);border-radius:6px;background:var(--slot-bg);cursor:pointer;color:var(--text)}.gp-row:hover{border-color:color-mix(in srgb, var(--accent) 60%, transparent);background:color-mix(in srgb, var(--accent) 6%, transparent)}.gp-row.locked{opacity:.45;cursor:default}.gp-row{cursor:default}.gp-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}.gp-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 2px;border:1px solid var(--card-line);border-radius:4px;background:var(--slot-bg);cursor:grab;font-size:11px;color:var(--muted)}.gp-chip:active{cursor:grabbing}.gp-chip img{width:18px;height:18px;object-fit:cover;object-position:top;border-radius:3px}.gp-chip.missing{border:1px dashed rgba(15,23,42,.3);background:var(--slot-bg);color:#78838f}.gp-chip.missing img{filter:grayscale(1) brightness(.85)}.gp-chip.missing span{color:#78838f}.gp-hint{font-size:10px;color:var(--dim)}.ax-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:5px}
+  .gp-free{pointer-events:none;background:transparent}.gp-free .dialog{pointer-events:auto}.gp-dialog{.gp-list{display:flex;flex-direction:column;gap:5px;max-height:56vh;overflow:auto;margin:8px 0}.gp-row{display:flex;align-items:center;text-align:left;padding:8px 10px;border:1px solid var(--card-line);border-radius:6px;background:var(--slot-bg);cursor:pointer;color:var(--text)}.gp-row:hover{border-color:color-mix(in srgb, var(--accent) 60%, transparent);background:color-mix(in srgb, var(--accent) 6%, transparent)}.gp-row.locked{opacity:.45;cursor:default}.gp-row{cursor:default}.gp-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}.gp-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px 2px 2px;border:1px solid var(--card-line);border-radius:4px;background:var(--slot-bg);cursor:grab;font-size:11px;color:var(--muted)}.gp-chip:active{cursor:grabbing}.gp-chip img{width:18px;height:18px;object-fit:cover;object-position:top;border-radius:3px}.gp-chip.missing{border:1px dashed rgba(15,23,42,.3);background:var(--slot-bg);color:#78838f}.gp-chip.missing img{filter:grayscale(1) brightness(.85)}.gp-chip.missing span{color:#78838f}.gp-hint{font-size:10px;color:var(--dim)}}.ax-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:5px}
   .ax-row{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--card-line);
     border-radius:6px;background:var(--slot-bg)}
   .ax-rinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
   .ax-rinfo b{font-size:12.5px}
   .ax-rinfo span{font-size:11px;color:#5a6472}
   .ax-rinfo i{font-size:10px;color:var(--dim);font-style:normal}
+/* ===== 本期强化抽屉：收起交互 ===== */
+/* 把手原本 z-index:31，被 z-index:32 的面板盖住 → 打开后点不到，无法收起。
+   抬到面板之上，并在打开时平移到面板右缘，当作「收起」把手用。 */
+#viewMatrix #mxDrawerTab{
+  z-index:35 !important;
+  transition:transform .26s var(--ease-drawer);
+}
+#viewMatrix #mxDrawer.open #mxDrawerTab{
+  transform:translate(min(400px,78vw),-50%) !important;
+  border-left:1px solid var(--card-line);
+  border-right:none;
+  border-radius:6px 0 0 6px;
+}
+#viewMatrix #mxDrawer.open #mxDrawerTab:hover{background:var(--hover-bg)}
+/* 面板标题栏的显式关闭按钮 */
+#mxDrawerPanel .sec-t{position:relative;padding-right:0}
+#mxDrawerClose{
+  margin-left:auto;flex:0 0 auto;
+  width:24px;height:24px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--card-line);border-radius:5px;
+  background:var(--panel2);color:var(--muted);
+  font-size:13px;line-height:1;cursor:pointer;
+  transition:background .15s var(--ease-out),color .15s var(--ease-out);
+}
+#mxDrawerClose:hover{background:var(--hover-bg);color:var(--text)}
+#mxDrawerClose:active{transform:scale(.94)}
 </style>
 </head>
 <body>
@@ -1579,7 +1606,6 @@ svg{display:block}
         <button class="btn" id="btnMatrixSync">同步矩阵</button>
         <button class="btn" id="btnMatrixTeams">带入已打编队</button>
         <span class="spacer"></span>
-        <button class="btn" id="btnAutoOrder">自动排序</button>
       </div>
       <div class="mx-rounds" id="rounds"></div>
       <div class="mx-body">
@@ -1597,7 +1623,7 @@ svg{display:block}
       <div id="mxDrawer">
         <button id="mxDrawerTab" title="本期强化角色"><span>‹</span> 本期强化</button>
         <div id="mxDrawerPanel">
-          <div class="sec-t inline">本期强化角色 <span class="n" id="roleCnt"></span></div>
+          <div class="sec-t inline">本期强化角色 <span class="n" id="roleCnt"></span><button id="mxDrawerClose" type="button" title="收起面板（Esc）">✕</button></div>
           <div class="roles" id="roleBox"></div>
         </div>
       </div>
@@ -3312,18 +3338,6 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   }
 
   function initMatrix() {
-    $('#btnAutoOrder').addEventListener('click', () => {
-      const { m } = matrixEnsure();
-      if (m.order.length < 2) {
-        toast('至少需要两支已上阵队伍');
-        return;
-      }
-      snapshot();
-      m.order.sort((a, b) => (Number(m.scores[b]) || 0) - (Number(m.scores[a]) || 0));
-      renderMatrix();
-      saveSoon();
-      toast('已按队伍总分降序排列');
-    });
 
     const roles = $('#roleBox');
     roles.innerHTML = '';
@@ -3456,7 +3470,11 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       if (!silent) toast(String(e.message || e));
       return;
     }
-    const teams = (data.teams || []).filter((t) => t.members.length && t.members.every((id) => CHAR_MAP.has(id)));
+    // 只保留本地有面板数据的成员，但不要因为个别角色缺失就把整支队伍丢掉——
+    // 丢队会让「按矩阵原样铺」的序号错位（实测 14 队只剩 13 队）。
+    const teams = (data.teams || [])
+      .map((t) => (Object.assign({}, t, { members: t.members.filter((id) => CHAR_MAP.has(id)) })))
+      .filter((t) => t.members.length);
     if (!teams.length) {
       if (!silent) toast('没有可同步的矩阵编队（可能成员未获得）');
       return;
@@ -4190,7 +4208,39 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   init();
   initTopSelects();
   const mxDrawerTab = $('#mxDrawerTab');
-  if (mxDrawerTab) mxDrawerTab.addEventListener('click', () => $('#mxDrawer').classList.toggle('open'));
+  const mxDrawer = $('#mxDrawer');
+
+  /** 打开/收起本期强化抽屉，并同步把手的箭头与提示文案。 */
+  function setMxDrawer(open) {
+    if (!mxDrawer) return;
+    mxDrawer.classList.toggle('open', !!open);
+    if (mxDrawerTab) {
+      const arrow = mxDrawerTab.querySelector('span');
+      if (arrow) arrow.textContent = open ? '›' : '‹';
+      mxDrawerTab.title = open ? '收起本期强化角色' : '本期强化角色';
+      mxDrawerTab.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+  }
+
+  if (mxDrawerTab) {
+    mxDrawerTab.title = '本期强化角色';
+    mxDrawerTab.setAttribute('aria-expanded', 'false');
+    mxDrawerTab.addEventListener('click', () => setMxDrawer(!mxDrawer.classList.contains('open')));
+  }
+  const mxDrawerClose = $('#mxDrawerClose');
+  if (mxDrawerClose) mxDrawerClose.addEventListener('click', () => setMxDrawer(false));
+  // Esc 收起
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && mxDrawer && mxDrawer.classList.contains('open')) setMxDrawer(false);
+  });
+  // 点面板外（且不是把手）收起
+  document.addEventListener('click', (e) => {
+    if (!mxDrawer || !mxDrawer.classList.contains('open')) return;
+    const t = e.target;
+    if (!t || typeof t.closest !== 'function') return;
+    if (t.closest('#mxDrawerPanel') || t.closest('#mxDrawerTab')) return;
+    setMxDrawer(false);
+  });
   axRefreshPresets();
 })();
 </script>
