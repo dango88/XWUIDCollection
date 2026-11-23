@@ -19,6 +19,8 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+import gsuid_core
+
 # 未使用的链接多久失效。参考抽卡页的 10 分钟。
 DEFAULT_TTL = 600
 
@@ -218,4 +220,35 @@ class LongLinkPool:
         return len(self._items)
 
 
-long_links = LongLinkPool()
+# ---------- 进程级单例 ----------
+#
+# gsuid_core 的 __full__.py 加载器会把插件目录下每个子包都当独立模块导入
+# （plugins.XWUIDCollection.wwtoolkit），而插件 __init__.py 里 ``from .wwtoolkit
+# import routes`` 又会生成 plugins.XWUIDCollection.XWUIDCollection.wwtoolkit。
+# 同一个文件被 exec 两次，模块级变量就有了两份：
+#   聊天侧（后注册的 SV 处理器）签发票据进 pool-B
+#   网页侧（先 import 的那份 routes）从 pool-A 消费
+# 结果就是「链接永远提示已失效」，日志里只有「签发」没有「已消费」。
+# 把池挂到 gsuid_core 包对象上，与模块路径无关，进程内唯一；热重载也不会丢池。
+_SHARED_ATTR = "_wwtoolkit_shared_pools"
+
+
+def _shared_pools() -> dict:
+    pools = getattr(gsuid_core, _SHARED_ATTR, None)
+    if pools is None:
+        pools = {}
+        setattr(gsuid_core, _SHARED_ATTR, pools)
+    return pools
+
+
+_POOLS = _shared_pools()
+if "pool" not in _POOLS:
+    _POOLS["pool"] = TicketPool()
+if "sessions" not in _POOLS:
+    _POOLS["sessions"] = SessionPool()
+if "long_links" not in _POOLS:
+    _POOLS["long_links"] = LongLinkPool()
+
+pool: TicketPool = _POOLS["pool"]
+sessions: SessionPool = _POOLS["sessions"]
+long_links: LongLinkPool = _POOLS["long_links"]

@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from collections import defaultdict, deque
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Deque
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -32,8 +35,6 @@ _DATA = Path(__file__).parent / "data"
 
 def _read_json(name: str) -> object:
     """读随插件发布的静态数据（目前只有矩阵表）。缺失/损坏都返回 None。"""
-    import json
-
     path = _DATA / name
     if not path.is_file():
         logger.warning(f"[ww工具箱] 静态数据缺失：{path}")
@@ -95,6 +96,76 @@ code{background:#222b36;padding:2px 6px;border-radius:4px;color:#4cc2ff}
 <p>请回到群里重新发送 <code>ww配队</code> 获取新链接。</p>
 <p style="color:#6e7681;font-size:12px;margin-top:14px">
 链接一次有效，10 分钟内不打开也会作废。</p></div></html>"""
+
+
+_ENTER_SHIM = """<!DOCTYPE html><html lang=zh-CN><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>正在进入配队工具箱</title>
+<style>
+html,body{height:100%;margin:0;background:#0e1116;color:#e6edf3;
+font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+display:flex;align-items:center;justify-content:center}
+.box{padding:30px 34px;border:1px solid #30363d;border-radius:12px;
+background:#161b22;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+h1{font-size:17px;margin:0 0 8px;color:#e6edf3}
+p{font-size:13px;color:#8b949e;margin:0;line-height:1.8}
+.btn{display:inline-block;margin-top:16px;padding:8px 18px;border-radius:8px;
+background:#2f81f7;color:#fff;text-decoration:none;font-size:13px}
+</style>
+<div class=box>
+<h1 id=t>正在进入配队工具箱…</h1>
+<p id=m>若没有自动跳转，点下面的按钮</p>
+<a class=btn id=b href="__GO__">手动进入</a>
+</div>
+<script>
+var TOKEN = __TOKEN__;
+var btn = document.getElementById('b');
+fetch('/waves/toolkit/api/enter', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'same-origin',
+  body: JSON.stringify({ token: TOKEN })
+}).then(function (r) { return r.json(); }).then(function (d) {
+  if (d && d.ok) {
+    btn.href = '/waves/toolkit/';
+    btn.textContent = '进入工具箱';
+    location.replace('/waves/toolkit/');
+  } else {
+    document.getElementById('t').textContent = '链接已失效';
+    document.getElementById('m').textContent =
+      (d && d.error) || '这个链接已经用过了，或者超过 10 分钟没有打开。';
+  }
+}).catch(function () {
+  document.getElementById('m').textContent = '网络异常，可点下方按钮重试';
+});
+</script>
+"""
+
+
+def _enter_shim(token: str) -> HTMLResponse:
+    """一次性链接的中转页：只渲染、不消费。
+
+    为什么消费不能放在 GET 里：群里发出链接后，QQ/微信的链接预览爬虫会在几秒内
+    从多个机房并发 GET 这个地址。若 GET 就消费，用户点开时票据早被爬虫用掉，
+    永远只能看到「链接已失效」。真正的消费放在页面内 POST /api/enter ——
+    爬虫不执行 JS，不会碰。不执行 JS 的浏览器走页面上的「手动进入」按钮。
+    """
+    go = f"/waves/toolkit/{quote(token, safe='')}/go"
+    html = _ENTER_SHIM.replace("__TOKEN__", json.dumps(token)).replace("__GO__", go)
+    return HTMLResponse(html, headers=_NO_STORE_HEADERS)
+
+
+def _consume_into_session(token: str) -> Response | None:
+    """消费一次性票据并种会话 cookie。失败（已用/过期/不存在）返回 None。"""
+    ticket = pool.consume(token)
+    if ticket is None:
+        return None
+    sess = sessions.create(ticket.user_id, ticket.bot_id)
+    logger.info(f"[ww工具箱] token 已消费 → 会话 {sess.sid[:8]}… ({ticket.user_id}@{ticket.bot_id})")
+    resp = RedirectResponse(url="/waves/toolkit/", status_code=303)
+    _set_session_cookie(resp, sess.sid)
+    resp.headers.update(_NO_STORE_HEADERS)
+    return resp
 
 
 def _invalid(reason: str, status: int = 200) -> HTMLResponse:
@@ -166,21 +237,47 @@ async def enter_long(key: str) -> Response:
 
 @router.get("/{token}", response_class=HTMLResponse, include_in_schema=False)
 async def enter(token: str) -> Response:
-    """一次性入口：消费 token → 种会话 cookie → 重定向到干净地址。
+    """一次性入口：只回中转页，**不消费**票据。
 
-    重定向这一步很关键：把 token 从地址栏抹掉，之后刷新只走 cookie，
-    不会因为「刷新即重放」把用户挡在失效页外面。
+    消费放在页面内的 POST /api/enter（或「手动进入」按钮的 /{token}/go），
+    否则群里链接刚发出去就会被 QQ/微信的预览爬虫抢先用掉。
     """
+    return _enter_shim(token)
+
+
+@router.get("/{token}/go", response_class=HTMLResponse, include_in_schema=False)
+async def enter_go(token: str) -> Response:
+    """中转页「手动进入」的落点：给不执行 JS 的浏览器兜底。"""
+    resp = _consume_into_session(token)
+    if resp is None:
+        return _invalid("这个链接已经用过了，或者超过 10 分钟没有打开。")
+    return resp
+
+
+@router.post("/api/enter", include_in_schema=False)
+async def api_enter(request: Request) -> Response:
+    """中转页调用的消费接口。成功后返回 {ok:true} 并种会话 cookie。
+
+    用 POST + JS 触发而不是 GET：链接预览爬虫只发 GET、不执行 JS。
+    """
+    body: object = None
+    try:
+        body = await request.json()
+    except JSONDecodeError:
+        body = None
+    token = str(body.get("token") or "") if isinstance(body, dict) else ""
+
     ticket = pool.consume(token)
     if ticket is None:
-        return _invalid("这个链接已经用过了，或者超过 10 分钟没有打开。")
+        return JSONResponse(
+            {"ok": False, "error": "这个链接已经用过了，或者超过 10 分钟没有打开。"},
+            headers=_NO_STORE_HEADERS,
+        )
 
     sess = sessions.create(ticket.user_id, ticket.bot_id)
     logger.info(f"[ww工具箱] token 已消费 → 会话 {sess.sid[:8]}… ({ticket.user_id}@{ticket.bot_id})")
-
-    resp = RedirectResponse(url="/waves/toolkit/", status_code=303)
+    resp = JSONResponse({"ok": True}, headers=_NO_STORE_HEADERS)
     _set_session_cookie(resp, sess.sid)
-    resp.headers.update(_NO_STORE_HEADERS)
     return resp
 
 
