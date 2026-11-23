@@ -29,6 +29,10 @@ FIXED_STAMINA1 = frozenset({"主角"})
 # 按四星处理（不显示五星金框）的五位老角色
 AS_FOUR_STAR = frozenset({"卡卡罗", "凌阳", "安可", "鉴心", "维里奈"})
 
+# 漂泊者（主角）各属性的 roleId：同一角色，切换属性共用体力。
+# id2name 里每个属性有两个 id（男/女主），全部收进来。
+ROVER_ROLE_IDS = frozenset({1309, 1310, 1406, 1408, 1501, 1502, 1604, 1605})
+
 
 @dataclass(frozen=True)
 class RosterEntry:
@@ -230,13 +234,41 @@ def load_characters(
             }
         )
 
-    # 漂泊者：rawData 里只保留最近刷新的一种属性，rover.json 里有全部
-    out.extend(
-        _rover_entries(uid, scores, seen=set(chain_map), with_avatar=with_avatar, stamina_bonus=stamina_bonus)
-    )
+    # 漂泊者：rawData 里只保留最近刷新的一种属性，rover.json 里有全部。
+    # 但 rawData 已经有主角时不能再追加一条 —— 否则前端会出现两张主角卡
+    # （112827758 实测：rawData 有 1605 湮灭，rover.json 又补了 1406 气动）。
+    if not (set(chain_map) & ROVER_ROLE_IDS):
+        out.extend(
+            _rover_entries(uid, scores, seen=set(chain_map), with_avatar=with_avatar, stamina_bonus=stamina_bonus)
+        )
+    # 主角拥有的全部属性（前端切换气泡用它决定哪些项置灰）
+    rover_els = _rover_elements(uid)
+    if rover_els:
+        for c in out:
+            try:
+                rid = int(c["id"])
+            except (TypeError, ValueError):
+                continue
+            if rid in ROVER_ROLE_IDS:
+                c["rover_elements"] = rover_els
 
     out.sort(key=lambda c: (-(c["quality"] or 0), -(c["score"] or 0), c["name"]))
     logger.info(f"[ww工具箱] uid={uid} 角色表 {len(out)} 人（有评分 {sum(1 for c in out if c['score'] is not None)}）")
+    return out
+
+
+def _rover_elements(uid: str) -> list[str]:
+    """从 rover.json 收集账号拥有的主角属性（用于前端切换气泡里置灰未拥有项）。"""
+    rover = _read_json(_player_dir(uid) / "rover.json")
+    if not isinstance(rover, dict):
+        return []
+    out: list[str] = []
+    for value in rover.values():
+        if not isinstance(value, dict):
+            continue
+        el = (value.get("role") or {}).get("attributeName")
+        if isinstance(el, str) and el and el not in out:
+            out.append(el)
     return out
 
 

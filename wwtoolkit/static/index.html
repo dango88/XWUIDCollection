@@ -1520,6 +1520,9 @@ svg{display:block}
 }
 .sw-i.on img{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--accent) 75%,transparent))}
 .sw-i.on::after{content:"";width:14px;height:2px;border-radius:1px;background:var(--accent);opacity:.85}
+.sw-i.off,.sw-i:disabled{opacity:.34;cursor:not-allowed;filter:grayscale(.7)}
+.sw-i.off:hover,.sw-i:disabled:hover{background:transparent;color:var(--muted)}
+.sw-i.off::after,.sw-i:disabled::after{display:none}
 /* 成员卡的模态标签：可点 */
 .tm .mb .modal-tag{cursor:pointer;transition:border-color .15s var(--ease-out),background .15s var(--ease-out)}
 .tm .mb .modal-tag:hover{border-color:color-mix(in srgb,var(--accent) 62%,transparent)}
@@ -1758,10 +1761,89 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   };
   /* 可在卡上切换的属性顺序 */
   const ROVER_VARIANTS = ['导电', '气动', '衍射', '湮灭'];
+  /* 面板里实际拥有的主角属性；没有的项在气泡里置灰 */
+  let ROVER_PANEL_ELEMENTS = [];
 
   function roverChar() {
     const id = roverOwnedId();
     return id ? CHAR_MAP.get(id) : null;
+  }
+
+  /** 面板里可能登记了多条主角记录（不同属性各一条）；合成一张卡，
+   *  保留数据最完整的那个（有评分/武器优先），其余移除。幂等。 */
+  function mergeRoverCards() {
+    const entries = CHARS.filter((c) => ROVER_IDS.indexOf(String(c.id)) >= 0);
+    // 面板里实际拥有的主角属性（用于切换气泡里置灰未拥有的项）。
+    // 优先用后端从 rover.json 汇总的 rover_elements，缺失时按 roleId 反推。
+    const declared = [];
+    entries.forEach((c) => {
+      (c.rover_elements || []).forEach((e) => { if (e && declared.indexOf(e) < 0) declared.push(e); });
+    });
+    ROVER_PANEL_ELEMENTS = declared.length
+      ? declared
+      : entries
+          .map((c) => ROVER_ID_ELEMENT[String(c.id)])
+          .filter((e, i, arr) => !!e && arr.indexOf(e) === i);
+    if (entries.length <= 1) return;
+    const ranked = entries.slice().sort((a, b) => {
+      const sa = Number(a.score) || 0;
+      const sb = Number(b.score) || 0;
+      if (sb !== sa) return sb - sa;
+      const wa = a.weapon && a.weapon.id ? 1 : 0;
+      const wb = b.weapon && b.weapon.id ? 1 : 0;
+      return wb - wa;
+    });
+    const keepId = String(ranked[0].id);
+    const dropIds = entries.map((c) => String(c.id)).filter((id) => id !== keepId);
+    for (let i = CHARS.length - 1; i >= 0; i--) {
+      const id = String(CHARS[i].id);
+      if (dropIds.indexOf(id) >= 0) CHARS.splice(i, 1);
+    }
+    dropIds.forEach((id) => {
+      CHAR_MAP.delete(id);
+      delete AVATAR[id];
+    });
+  }
+
+  /** 把队伍/方案/矩阵评分里指向其它主角属性的 id 统一成保留的那个。幂等。 */
+  function normalizeRoverSlots() {
+    const canon = roverOwnedId();
+    if (!canon) return;
+    const isOtherRover = (id) => !!id && ROVER_IDS.indexOf(String(id)) >= 0 && String(id) !== canon;
+    const sigRemap = {};
+
+    state.teams = (state.teams || []).map((slots) => {
+      if (!slots || !slots.some(isOtherRover)) return slots;
+      const oldSig = sigOf(slots);
+      const next = slots.map((id) => (isOtherRover(id) ? canon : id));
+      sigRemap[oldSig] = sigOf(next);
+      return next;
+    });
+
+    const remapKeys = (obj) => {
+      const out = {};
+      Object.keys(obj || {}).forEach((k) => {
+        out[sigRemap[k] !== undefined ? sigRemap[k] : k] = obj[k];
+      });
+      return out;
+    };
+    if (Object.keys(sigRemap).length) {
+      state.matrix.scores = remapKeys(state.matrix.scores);
+      state.matrix.buffSel = remapKeys(state.matrix.buffSel);
+      state.matrix.order = (state.matrix.order || []).map((k) => (sigRemap[k] !== undefined ? sigRemap[k] : k));
+    }
+
+    (state.presets || []).forEach((p) => {
+      if (!p) return;
+      if (Array.isArray(p.teams)) {
+        p.teams = p.teams.map((slots) => (slots || []).map((id) => (isOtherRover(id) ? canon : id)));
+      }
+      if (p.matrix && Object.keys(sigRemap).length) {
+        p.matrix.scores = remapKeys(p.matrix.scores);
+        p.matrix.buffSel = remapKeys(p.matrix.buffSel || {});
+        p.matrix.order = (p.matrix.order || []).map((k) => (sigRemap[k] !== undefined ? sigRemap[k] : k));
+      }
+    });
   }
 
   /** 把主角卡的属性/名字换成指定属性（id 不变 → 体力仍共用 1 点）。 */
@@ -1782,7 +1864,13 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
 
   /** 主角属性可选项：图标 + 文字。 */
   function roverSwitchItems() {
-    return ROVER_VARIANTS.map((e) => ({ key: e, label: e, icon: ELEMENT_ICON[e] || '' }));
+    return ROVER_VARIANTS.map((e) => ({
+      key: e,
+      label: e,
+      icon: ELEMENT_ICON[e] || '',
+      // 面板里没有这个属性 → 置灰不可选
+      disabled: ROVER_PANEL_ELEMENTS.indexOf(e) < 0,
+    }));
   }
 
   /** 共鸣模态可选项：图标 + 文字。 */
@@ -1802,9 +1890,10 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     const pop = el('div', 'sw-pop');
     items.forEach((it) => {
       const on = String(it.key) === String(currentKey);
-      const b = el('button', 'sw-i' + (on ? ' on' : ''));
+      const off = !!it.disabled;
+      const b = el('button', 'sw-i' + (on ? ' on' : '') + (off ? ' off' : ''));
       b.type = 'button';
-      b.title = it.label;
+      b.title = off ? `${it.label}（面板里没有该属性）` : it.label;
       if (it.icon) {
         const im = new Image();
         im.src = it.icon;
@@ -1812,12 +1901,17 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
         b.appendChild(im);
       }
       b.appendChild(el('span', 'sw-t', it.label));
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        onPick(it.key);
-        closeSwPop();
-      });
+      if (off) {
+        b.disabled = true;
+        b.setAttribute('aria-disabled', 'true');
+      } else {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onPick(it.key);
+          closeSwPop();
+        });
+      }
       pop.appendChild(b);
     });
     document.body.appendChild(pop);
@@ -1965,6 +2059,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   }
 
   function loadState() {
+    // 面板里多条主角记录 → 合成一张卡（必须在恢复队伍之前，幂等）
+    mergeRoverCards();
     let saved = null;
     try {
       saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
@@ -2009,6 +2105,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       // 老存档没有这个字段 → false，仍会走一次自动同步
       state.autoSynced = !!saved.autoSynced;
       state.roverVariant = typeof saved.roverVariant === 'string' ? saved.roverVariant : '';
+      // 队伍/方案里其它主角属性的 id 统一到保留的那个
+      normalizeRoverSlots();
       if (state.roverVariant) applyRoverVariant(state.roverVariant);
       if (typeof syncTopSelects === 'function') syncTopSelects();
       return;
@@ -2027,6 +2125,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     state.activePreset = state.presets[0].id;
     state.presetName = state.presets[0].name;
     state.presetDirty = false;
+    normalizeRoverSlots();
     if (state.roverVariant) applyRoverVariant(state.roverVariant);
     remapSeedScores();
     if (typeof syncTopSelects === 'function') syncTopSelects();
@@ -3687,7 +3786,11 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       }
       return '';
     })();
-    if (roverEl && roverChar()) applyRoverVariant(roverEl);
+    if (roverEl && roverChar()) {
+      // 矩阵里用过这个属性 = 账号确实拥有，补进可选项（否则会被置灰）
+      if (ROVER_PANEL_ELEMENTS.indexOf(roverEl) < 0) ROVER_PANEL_ELEMENTS.push(roverEl);
+      applyRoverVariant(roverEl);
+    }
 
     // 只保留本地有面板数据的成员，但不要因为个别角色缺失就把整支队伍丢掉——
     // 丢队会让「按矩阵原样铺」的序号错位（实测 14 队只剩 13 队）。

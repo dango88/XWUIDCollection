@@ -351,6 +351,7 @@ _ADAPTER_JS = """
         },
         skills: (c.skills || []).map((sk) => ({ name: String(sk.name || ''), level: sk.level || 0 })),
         modal: c.modal ? { list: c.modal.list || [], active: c.modal.active } : null,
+        rover_elements: c.rover_elements || [],
       }));
       // 用户切过的模态（od_state.modals）覆盖面板默认激活分支
       const savedModals = (d.state && d.state.od_state && d.state.od_state.modals) || {};
