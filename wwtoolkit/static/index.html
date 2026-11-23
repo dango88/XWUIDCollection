@@ -1490,6 +1490,39 @@ svg{display:block}
 }
 #mxDrawerClose:hover{background:var(--hover-bg);color:var(--text)}
 #mxDrawerClose:active{transform:scale(.94)}
+/* ===== 切换气泡（主角属性 / 共鸣模态） ===== */
+.sw-pop{
+  position:fixed;z-index:95;padding:7px;border-radius:10px;
+  border:1px solid var(--card-line);background:var(--panel);
+  box-shadow:0 14px 34px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.06);
+  display:flex;gap:6px;align-items:stretch;max-width:min(92vw,440px);flex-wrap:wrap;
+  transform-origin:var(--to,top center);animation:swin .16s var(--ease-out);
+}
+@keyframes swin{from{opacity:0;transform:translateY(4px) scale(.97)}to{opacity:1;transform:none}}
+.sw-i{
+  appearance:none;-webkit-appearance:none;
+  width:60px;padding:7px 4px 6px;border-radius:8px;border:1px solid transparent;
+  background:transparent;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  color:var(--muted);font:700 10.5px/1.2 var(--sans);
+  transition:background .15s var(--ease-out),border-color .15s var(--ease-out),color .15s var(--ease-out);
+}
+.sw-i:hover{background:var(--hover-bg);color:var(--text)}
+.sw-i:active{transform:scale(.96)}
+.sw-i img{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.sw-i .sw-t{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 当前选中：着重显示 */
+.sw-i.on{
+  border-color:color-mix(in srgb,var(--accent) 68%,transparent);
+  background:color-mix(in srgb,var(--accent) 16%,transparent);
+  color:var(--accent);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 28%,transparent) inset;
+}
+.sw-i.on img{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--accent) 75%,transparent))}
+.sw-i.on::after{content:"";width:14px;height:2px;border-radius:1px;background:var(--accent);opacity:.85}
+/* 成员卡的模态标签：可点 */
+.tm .mb .modal-tag{cursor:pointer;transition:border-color .15s var(--ease-out),background .15s var(--ease-out)}
+.tm .mb .modal-tag:hover{border-color:color-mix(in srgb,var(--accent) 62%,transparent)}
 </style>
 </head>
 <body>
@@ -1716,6 +1749,110 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     return key;
   }
 
+  /* 主角的 roleId → 属性（每个属性两个 id，男女主）。 */
+  const ROVER_ID_ELEMENT = {
+    '1309': '导电', '1310': '导电',
+    '1406': '气动', '1408': '气动',
+    '1501': '衍射', '1502': '衍射',
+    '1604': '湮灭', '1605': '湮灭',
+  };
+  /* 可在卡上切换的属性顺序 */
+  const ROVER_VARIANTS = ['导电', '气动', '衍射', '湮灭'];
+
+  function roverChar() {
+    const id = roverOwnedId();
+    return id ? CHAR_MAP.get(id) : null;
+  }
+
+  /** 把主角卡的属性/名字换成指定属性（id 不变 → 体力仍共用 1 点）。 */
+  function applyRoverVariant(element) {
+    const c = roverChar();
+    if (!c || ROVER_VARIANTS.indexOf(element) < 0) return;
+    c.element = element;
+    c.name = '漂泊者·' + element;
+    state.roverVariant = element;
+  }
+
+  /* ---------- 切换气泡（主角属性 / 共鸣模态共用） ---------- */
+  let swPop = null;
+
+  function closeSwPop() {
+    if (swPop) { swPop.remove(); swPop = null; }
+  }
+
+  /** 主角属性可选项：图标 + 文字。 */
+  function roverSwitchItems() {
+    return ROVER_VARIANTS.map((e) => ({ key: e, label: e, icon: ELEMENT_ICON[e] || '' }));
+  }
+
+  /** 共鸣模态可选项：图标 + 文字。 */
+  function modalSwitchItems(c) {
+    return (c.modal && c.modal.list ? c.modal.list : []).map((m) => ({
+      key: String(m.id),
+      label: String(m.name || '').replace('共鸣模态·', ''),
+      icon: '/waves/toolkit/api/modal/' + encodeURIComponent(m.name),
+    }));
+  }
+
+  /** 在 anchor 附近弹出切换气泡：列全部选项，当前项高亮，选中后回调 onPick。 */
+  function openSwPop(anchor, items, currentKey, onPick) {
+    closeSwPop();
+    if (typeof closeBuffPop === 'function') closeBuffPop();
+    if (!items || !items.length) return;
+    const pop = el('div', 'sw-pop');
+    items.forEach((it) => {
+      const on = String(it.key) === String(currentKey);
+      const b = el('button', 'sw-i' + (on ? ' on' : ''));
+      b.type = 'button';
+      b.title = it.label;
+      if (it.icon) {
+        const im = new Image();
+        im.src = it.icon;
+        im.alt = it.label;
+        b.appendChild(im);
+      }
+      b.appendChild(el('span', 'sw-t', it.label));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onPick(it.key);
+        closeSwPop();
+      });
+      pop.appendChild(b);
+    });
+    document.body.appendChild(pop);
+
+    // 定位：优先在锚点上方，空间不足则下方；水平居中并夹在视口内
+    const r = anchor.getBoundingClientRect();
+    pop.style.visibility = 'hidden';
+    requestAnimationFrame(() => {
+      const pw = pop.offsetWidth;
+      const ph = pop.offsetHeight;
+      let x = r.left + r.width / 2 - pw / 2;
+      x = Math.max(8, Math.min(x, innerWidth - pw - 8));
+      let y = r.top - ph - 8;
+      if (y < 60) y = Math.min(r.bottom + 8, innerHeight - ph - 8);
+      pop.style.left = x + 'px';
+      pop.style.top = y + 'px';
+      pop.style.visibility = '';
+    });
+    swPop = pop;
+
+    const onDoc = (e) => {
+      if (!swPop) return;
+      if (swPop.contains(e.target) || (anchor && anchor.contains(e.target))) return;
+      closeSwPop();
+      document.removeEventListener('click', onDoc);
+    };
+    setTimeout(() => document.addEventListener('click', onDoc), 0);
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      closeSwPop();
+      document.removeEventListener('keydown', onKey);
+    };
+    document.addEventListener('keydown', onKey);
+  }
+
   const state = {
     view: 'pair',
     teams: [],
@@ -1733,6 +1870,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     presetName: '',
     // 已经做过「打开即同步矩阵」了；true 之后不再自动覆盖用户的编队
     autoSynced: false,
+    // 主角当前展示的属性（导电/气动/衍射/湮灭），只影响展示，不换 id
+    roverVariant: '',
   };
 
   const undoStack = [];
@@ -1869,6 +2008,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       state.presetDirty = !!saved.presetDirty;
       // 老存档没有这个字段 → false，仍会走一次自动同步
       state.autoSynced = !!saved.autoSynced;
+      state.roverVariant = typeof saved.roverVariant === 'string' ? saved.roverVariant : '';
+      if (state.roverVariant) applyRoverVariant(state.roverVariant);
       if (typeof syncTopSelects === 'function') syncTopSelects();
       return;
     }
@@ -1886,6 +2027,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     state.activePreset = state.presets[0].id;
     state.presetName = state.presets[0].name;
     state.presetDirty = false;
+    if (state.roverVariant) applyRoverVariant(state.roverVariant);
     remapSeedScores();
     if (typeof syncTopSelects === 'function') syncTopSelects();
   }
@@ -1931,6 +2073,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
         presetName: state.presetName || '',
         presetDirty: !!state.presetDirty,
         autoSynced: !!state.autoSynced,
+        roverVariant: state.roverVariant || '',
         ts: Date.now(),
       }));
       setSaveTip('已保存', false);
@@ -2659,10 +2802,11 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
         card.appendChild(badge);
       }
 
+      const isRoverCard = ROVER_IDS.indexOf(String(c.id)) >= 0;
       const pill = el('span', 'ch-st', `⚡${left}`);
       pill.title = `剩余可进队伍次数 ${left} / ${c.stamina}`;
       if (left <= 0) pill.classList.add('full');
-      if (c.modal && c.modal.list && c.modal.list.length > 1) pill.classList.add('with-modal');
+      if ((c.modal && c.modal.list && c.modal.list.length > 1) || isRoverCard) pill.classList.add('with-modal');
 
       if (exhausted) {
         const lk = el('span', 'ch-lock');
@@ -2671,27 +2815,54 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
         card.appendChild(lk);
       }
 
+      // 主角：切换属性（同一角色，共用 1 点体力）
+      if (isRoverCard) {
+        const rb = el('span', 'ch-modal');
+        const ri = new Image();
+        const paint = () => {
+          ri.src = ELEMENT_ICON[c.element] || '';
+          ri.alt = c.element;
+          rb.title = `主角属性 ${c.element}（点击切换，共用 1 点体力）`;
+        };
+        paint();
+        rb.appendChild(ri);
+        rb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          openSwPop(rb, roverSwitchItems(), c.element, (key) => {
+            applyRoverVariant(String(key));
+            renderPool();
+            renderTeams();
+            saveSoon();
+            toast('主角 → ' + key);
+          });
+        });
+        card.appendChild(rb);
+      }
+
       if (c.modal && c.modal.list && c.modal.list.length > 1) {
         const mb = el('span', 'ch-modal');
         const mi = new Image();
         const setModal = (b) => {
           mi.src = '/waves/toolkit/api/modal/' + encodeURIComponent(b.name);
           mi.alt = b.name;
-          mb.title = '共鸣模态：' + b.name.replace('共鸣模态·', '') + '（点击切换）';
+          mb.title = '共鸣模态：' + b.name.replace('共鸣模态·', '') + '（点击选择）';
         };
         setModal(c.modal.list.find((b) => String(b.id) === String(c.modal.active)) || c.modal.list[0]);
         mb.appendChild(mi);
         mb.addEventListener('click', (e) => {
           e.stopPropagation();
           e.preventDefault();
-          if (left <= 0) { toast(`${c.name} 体力已用尽，无法切换模态`); return; }
-          const idx = c.modal.list.findIndex((b) => String(b.id) === String(c.modal.active));
-          const next = c.modal.list[(idx + 1) % c.modal.list.length];
-          c.modal.active = next.id;
-          state.modals[c.id] = next.id;
-          setModal(next);
-          saveSoon();
-          toast(c.name + ' → ' + next.name.replace('共鸣模态·', ''));
+          // 切换模态只是展示/配置选择，不消耗体力，体力用尽也允许改
+          openSwPop(mb, modalSwitchItems(c), c.modal.active, (key) => {
+            const next = c.modal.list.find((b) => String(b.id) === String(key)) || c.modal.list[0];
+            c.modal.active = next.id;
+            state.modals[c.id] = next.id;
+            renderPool();
+            renderTeams();
+            saveSoon();
+            toast(c.name + ' → ' + String(next.name).replace('共鸣模态·', ''));
+          });
         });
         card.appendChild(mb);
       }
@@ -2941,6 +3112,21 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       mdI.addEventListener('error', () => mdI.remove());
       modalEl.appendChild(mdI);
       modalEl.appendChild(el('span', 'modal-nm', String(curMd.name).replace('共鸣模态·', '')));
+      modalEl.title = `共鸣模态：${String(curMd.name).replace('共鸣模态·', '')}（点击选择）`;
+      modalEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        // 同上：切换模态不消耗体力
+        openSwPop(modalEl, modalSwitchItems(c), c.modal.active, (key) => {
+          const next = c.modal.list.find((m) => String(m.id) === String(key)) || c.modal.list[0];
+          c.modal.active = next.id;
+          state.modals[c.id] = next.id;
+          renderPool();
+          renderTeams();
+          saveSoon();
+          toast(c.name + ' → ' + String(next.name).replace('共鸣模态·', ''));
+        });
+      });
     }
     av.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', `slot:${ti}:${si}`);
@@ -3491,6 +3677,18 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       if (!silent) toast(String(e.message || e));
       return;
     }
+    // 主角在矩阵里用的是哪个属性 → 同步后卡片就展示那个属性
+    const roverEl = (() => {
+      for (const t of data.teams || []) {
+        for (const id of t.members || []) {
+          const el = ROVER_ID_ELEMENT[String(id)];
+          if (el) return el;
+        }
+      }
+      return '';
+    })();
+    if (roverEl && roverChar()) applyRoverVariant(roverEl);
+
     // 只保留本地有面板数据的成员，但不要因为个别角色缺失就把整支队伍丢掉——
     // 丢队会让「按矩阵原样铺」的序号错位（实测 14 队只剩 13 队）。
     const teams = (data.teams || [])
