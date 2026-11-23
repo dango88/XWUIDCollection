@@ -4,6 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
+<script>
+/* __ww_theme_preset: 首帧前定好 data-theme，避免深色默认下先闪浅色 */
+function __ww_theme_preset(){var t="dark";try{t=localStorage.getItem("mc-toolkit-theme")||"dark";}catch(e){}document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}
+__ww_theme_preset();
+</script>
 <title>鸣潮矩阵配队 · 第 09 期</title>
 <style>
 *,*::before,*::after{box-sizing:border-box}
@@ -3802,8 +3807,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   }
 
   function initTheme() {
-    let t = 'light';
-    try { t = localStorage.getItem(THEME_KEY) || 'light'; } catch (e) { /* 忽略 */ }
+    let t = 'dark';
+    try { t = localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { /* 忽略 */ }
     applyTheme(t === 'dark' ? 'dark' : 'light');
     const btn = $('#btnTheme');
     if (btn) {
