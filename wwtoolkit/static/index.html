@@ -1684,12 +1684,17 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     activePreset: '',
     presetDirty: false,
     presetName: '',
+    // 已经做过「打开即同步矩阵」了；true 之后不再自动覆盖用户的编队
+    autoSynced: false,
   };
 
   const undoStack = [];
   const rowMeta = new Map();
   let saveTimer = null;
   let toastTimer = null;
+  // 自动同步期间为 true：此时 commit() 不应把 autoSynced 置位（否则同步还没
+  // 成功就因为自己调了 commit 而「已同步」），改由 matrixSync 成功后显式置位。
+  let syncingAuto = false;
 
   const existing = CHAR_MAP;
 
@@ -1815,6 +1820,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       }
       state.presetName = typeof saved.presetName === 'string' ? saved.presetName : '';
       state.presetDirty = !!saved.presetDirty;
+      // 老存档没有这个字段 → false，仍会走一次自动同步
+      state.autoSynced = !!saved.autoSynced;
       if (typeof syncTopSelects === 'function') syncTopSelects();
       return;
     }
@@ -1876,6 +1883,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
         activePreset: state.activePreset || '',
         presetName: state.presetName || '',
         presetDirty: !!state.presetDirty,
+        autoSynced: !!state.autoSynced,
         ts: Date.now(),
       }));
       setSaveTip('已保存', false);
@@ -3131,6 +3139,9 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   }
 
   function commit() {
+    // 任何一次提交都说明状态被改过了（用户操作或同步）。除非「正在做自动同步」，
+    // 否则记下「这个存档不需要再自动同步了」。
+    if (!syncingAuto) state.autoSynced = true;
     renderPool();
     renderTeams();
     updateTabs();
@@ -3153,7 +3164,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       round: state.matrix.round,
     };
     p.ts = Date.now();
-    state.presetDirty = true;
+    // 注意：这里已经把改动写回方案本体了，方案内容始终等于当前状态，
+    // 所以不再置 presetDirty（否则下拉会永久挂着「·已改」）。
     syncTopSelects();
   }
 
@@ -3489,24 +3501,35 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     state.matrix.round = MATRIX_ROUNDS[0].id;
     clearPick();
     commit();
+    // 同步成功（自动或手动）都意味着「数据已经对上了」，以后不再自动覆盖
+    state.autoSynced = true;
     if (silent) {
       // 自动同步是程序行为、不是用户改动：commit 里的 autosync 会置 presetDirty，
       // 这里立刻复位，避免页面一打开方案就挂着「·已改」；顺带把结果落盘。
       state.presetDirty = false;
       saveNow();
       syncTopSelects();
+    } else {
+      saveNow();
     }
     toast(`已同步 ${teams.length} 支矩阵编队（${data.modeName}）`);
   }
 
-  /** 打开页面时自动同步一次矩阵编队。
+  /** 首次打开页面时自动同步一次矩阵编队。
    *
-   * 只在账号确有矩阵记录时才动：matrixSync 内部对「没有编队」直接 return，
-   * 所以没有矩阵数据的用户打开页面仍是空白方案 1。
+   * 只做一次：state.autoSynced 为 true（同步过 / 用户编辑过 / 老存档已标记）
+   * 就直接返回，不再覆盖用户的编队。没有矩阵记录时 matrixSync 内部直接返回，
+   * 此时不置位，等真正有数据时还能补一次。
    */
   async function matrixAutoSync() {
+    if (state.autoSynced) return;
     // 页面由 core 提供时才有会话；静态预览下 axApi 会抛错，matrixSync 内部已静默
-    await matrixSync(true);
+    syncingAuto = true;
+    try {
+      await matrixSync(true);
+    } finally {
+      syncingAuto = false;
+    }
   }
 
   async function openMatrixTeams() {
@@ -3924,8 +3947,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       .forEach((pr) => {
         const o = document.createElement('option');
         o.value = pr.id;
-        const dirty = activeId === pr.id && state.presetDirty;
-        o.textContent = `${pr.name}（${(pr.teams || []).filter((t) => (t || []).some(Boolean)).length} 队）${dirty ? ' ·已改' : ''}`;
+        o.textContent = `${pr.name}（${(pr.teams || []).filter((t) => (t || []).some(Boolean)).length} 队）`;
         pSel.appendChild(o);
       });
     pSel.value = state.presets.some((x) => x.id === activeId) ? activeId : '';
