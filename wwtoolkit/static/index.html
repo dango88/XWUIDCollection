@@ -1376,6 +1376,47 @@ svg{display:block}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition:none!important;animation:none!important}
 }
+/* ===== 成员卡底部信息区：技能行跨满整卡宽度 ===== */
+/* 原因：.mc-info 原本是 flex row = [mi-left(武器组+技能行 上下叠)] [评分]。
+   1080p 下次卡只有 ~118px，扣掉评分后技能行只剩 ~78px，5 个菱形被压到 11px。
+   改成两行 grid，第二行技能跨满，可用宽度翻倍：
+     第一行 [武器组][评分]
+     第二行 [技能行 ─────────] */
+.mb{container-type:inline-size}
+.tm .mb .mc-info{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) auto!important;
+  grid-template-rows:auto auto!important;
+  align-items:center!important;
+  gap:2px 3px!important;
+}
+/* 让这层包装在 grid 里失效，wg / mc-sk 直接参与父级网格 */
+.tm .mb .mc-info > .mi-left{display:contents!important}
+/* wg / mc-sk 是 .mi-left 的子节点，display:contents 后成为网格项，
+   但仍在 .mi-left 内部，所以定位选择器不能写成 .mc-info > */
+.tm .mb .mc-info .mi-left > .wg{grid-column:1;grid-row:1;min-width:0}
+.tm .mb .mc-info .mi-left > .mc-sk{grid-column:1/-1;grid-row:2;min-width:0}
+.tm .mb .mc-info > .nm-rt{grid-column:2;grid-row:1;align-self:center}
+
+.tm .mb .mc-sk{
+  grid-template-columns:repeat(5,minmax(0,1fr))!important;
+  gap:2px!important;padding:2px!important;
+  border-radius:5px;
+}
+.tm .mb .mc-sk .dsk-w{min-width:0!important}
+/* 菱形尺寸由列宽决定，但不超过 19px（卡片很宽时不无限放大） */
+.tm .mb .mc-sk .dsk{
+  width:100%!important;max-width:19px!important;
+  height:auto!important;aspect-ratio:1/1!important;
+  min-width:0!important;border-radius:4px!important;
+}
+.tm .mb .mc-sk .dsk img{
+  width:84%!important;height:84%!important;
+  max-width:16px!important;max-height:16px!important;
+}
+.tm .mb .mc-sk .dsk-n{font-size:clamp(8px,8.6cqi,9.5px)!important;line-height:1.05!important}
+.tm .mb .mc-info,.tm .mb .mi-left{min-width:0}
+
 /* ---------- additions for matrix/order ---------- */
 .oavs{display:flex;flex:0 0 auto;gap:2px}
 .oavs .oav{width:22px;height:22px}
@@ -1710,30 +1751,22 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
   /* ---------- persistence ---------- */
 
   function seedPresets() {
-    const now = Date.now();
-    const mk = (id, name, teams, names, ageH) => ({
-      id,
-      name,
-      ts: now - ageH * 3600 * 1000,
-      teams: teams.map((t) => t.slice()),
-      names: Object.assign({}, names),
-    });
+    // 默认只有一个方案：不再生成内置示例方案，只留一个空白的「方案 1」
+    const mx = state.matrix || {};
     return [
-      mk('seed-main', '主力速切', [
-        ['1312', '1210', '1608'],
-        ['1411', '1412', '1509'],
-        ['1109', '1209', '1102'],
-      ], { 0: '速切主C', 1: '气动副C', 2: '冷凝辅助' }, 3),
-      mk('seed-tower', '深塔攻坚', [
-        ['1310', '1512', '1503'],
-        ['1602', '1307', '1203'],
-        ['1405', '1301', null],
-      ], { 0: '导电主C', 1: '湮灭副C', 2: '气动坦克' }, 27),
-      mk('seed-daily', '日常清体力', [
-        ['1104', '1204', '1402'],
-        ['1103', '1403', '1303'],
-        [null, null, null],
-      ], { 0: '冷凝速刷', 1: '无音区' }, 74),
+      {
+        id: 'preset-default',
+        name: '方案 1',
+        ts: Date.now(),
+        teams: state.teams.map((t) => t.slice()),
+        names: Object.assign({}, state.names),
+        matrix: {
+          scores: Object.assign({}, mx.scores || {}),
+          buffSel: Object.assign({}, mx.buffSel || {}),
+          order: (mx.order || []).slice(),
+          round: mx.round,
+        },
+      },
     ];
   }
 
@@ -1748,9 +1781,6 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
       state.teams = padTeams(saved.teams);
       state.names = saved.names && typeof saved.names === 'object' ? saved.names : {};
       state.modals = saved.modals && typeof saved.modals === 'object' ? saved.modals : {};
-      state.presets = Array.isArray(saved.presets) && (saved.presets.length || saved.seedDone)
-        ? saved.presets
-        : seedPresets();
       if (saved.matrix && typeof saved.matrix === 'object') {
         state.matrix = {
           scores: saved.matrix.scores && typeof saved.matrix.scores === 'object' ? saved.matrix.scores : {},
@@ -1759,9 +1789,25 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
           buffSel: saved.matrix.buffSel && typeof saved.matrix.buffSel === 'object' ? saved.matrix.buffSel : {},
         };
       }
+      // 内置示例方案（id 以 seed- 开头）不再保留，老存档读出来时顺手清掉。
+      // 必须放在 matrix 恢复之后——seedPresets() 要拿当前 matrix 做初始快照。
+      const kept = Array.isArray(saved.presets)
+        ? saved.presets.filter((p) => p && !String(p.id || '').startsWith('seed-'))
+        : [];
+      state.presets = kept.length ? kept : seedPresets();
       if (saved.view === 'pair' || saved.view === 'matrix' || saved.view === 'archive') state.view = saved.view;
       // 恢复当前选中的方案（下拉要显示它，而不是回到"选择方案…"）
       state.activePreset = typeof saved.activePreset === 'string' ? saved.activePreset : '';
+      // 指向已删掉的方案时回落，避免下拉停在「选择方案…」
+      if (state.activePreset && !state.presets.some((p) => p.id === state.activePreset)) {
+        state.activePreset = '';
+        state.presetDirty = false;
+      }
+      // 只有默认方案且没选过任何方案时，直接把它设为当前方案
+      if (!state.activePreset && state.presets.length === 1) {
+        state.activePreset = state.presets[0].id;
+        state.presetDirty = false;
+      }
       state.presetName = typeof saved.presetName === 'string' ? saved.presetName : '';
       state.presetDirty = !!saved.presetDirty;
       if (typeof syncTopSelects === 'function') syncTopSelects();
@@ -1769,13 +1815,18 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     }
     state.modals = {};
     state.teams = padTeams(SEED_TEAMS);
-    state.presets = seedPresets();
     state.matrix = {
       scores: Object.assign({}, SEED_MATRIX.scores),
       order: SEED_MATRIX.order.slice(),
       round: SEED_MATRIX.round || MATRIX_ROUNDS[0].id,
       buffSel: {},
     };
+    // seedPresets() 读 state.matrix，必须放在 matrix 之后
+    state.presets = seedPresets();
+    // 全新存档：只有一个默认方案，直接设为当前方案（下拉要显示它）
+    state.activePreset = state.presets[0].id;
+    state.presetName = state.presets[0].name;
+    state.presetDirty = false;
     remapSeedScores();
     if (typeof syncTopSelects === 'function') syncTopSelects();
   }
@@ -3379,25 +3430,26 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     return cur.some((sig, i) => sig !== mtx[i]);
   }
 
-  async function matrixSync() {
+  async function matrixSync(silent) {
     let data;
     try {
       data = await axApi('matrix_teams');
     } catch (e) {
-      toast(String(e.message || e));
+      if (!silent) toast(String(e.message || e));
       return;
     }
     const teams = (data.teams || []).filter((t) => t.members.length && t.members.every((id) => CHAR_MAP.has(id)));
     if (!teams.length) {
-      toast('没有可同步的矩阵编队（可能成员未获得）');
+      if (!silent) toast('没有可同步的矩阵编队（可能成员未获得）');
       return;
     }
     const hasLocal = state.teams.some((t) => t.some(Boolean));
     if (hasLocal && !teamsDiffer(state.teams, teams)) {
-      toast('当前配队已与矩阵一致，无需同步');
+      if (!silent) toast('当前配队已与矩阵一致，无需同步');
       return;
     }
-    if (hasLocal) {
+    // silent = 打开页面时的自动同步：不弹确认框，但先 snapshot() 保证可撤销
+    if (hasLocal && !silent) {
       const ok = await askDialog({
         title: '同步矩阵编队',
         desc: `检测到当前编队与账号矩阵记录不一致。将用已打的 ${teams.length} 支编队（${data.modeName}）覆盖当前配队、分数与 Buff，可通过撤销恢复。`,
@@ -3432,6 +3484,12 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     clearPick();
     commit();
     toast(`已同步 ${teams.length} 支矩阵编队（${data.modeName}）`);
+  }
+
+  /** 打开页面时自动同步一次矩阵编队（等价于点「同步矩阵」，只是不弹确认框）。 */
+  async function matrixAutoSync() {
+    // 页面由 core 提供时才有会话；静态预览下 axApi 会抛错，matrixSync 内部已静默
+    await matrixSync(true);
   }
 
   async function openMatrixTeams() {
@@ -3937,6 +3995,42 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     renderArchive();
     syncTopSelects();
     toast(`已保存方案「${name}」`, 'good');
+  }
+
+  /** 右上角「＋」：新建一个空白方案并设为当前方案。
+   *
+   * 必须同时清空 state.teams：commit() 里会调 autosyncActivePreset() 把当前配队
+   * 写回当前方案，否则新方案一建出来就带着旧编队和「已改」标记。
+   */
+  async function newPresetQuick() {
+    snapshot();
+    const nid = 'p' + Date.now();
+    state.teams = Array.from({ length: TEAM_MIN }, () => new Array(SLOT).fill(null));
+    state.names = {};
+    state.matrix.scores = {};
+    state.matrix.buffSel = {};
+    state.matrix.order = [];
+    clearPick();
+    // push 时就把空状态写进去（此时 autosync 还没跑）
+    state.presets.push({
+      id: nid,
+      name: `方案 ${state.presets.length + 1}`,
+      ts: Date.now(),
+      teams: state.teams.map((t) => t.slice()),
+      names: {},
+      matrix: { scores: {}, buffSel: {}, order: [], round: state.matrix.round },
+    });
+    if (state.presets.length > 30) state.presets.shift();
+    state.activePreset = nid;
+    state.presetName = state.presets[state.presets.length - 1].name;
+    commit();
+    // commit 里的 autosync 会置 presetDirty=true（它无法区分「用户在改」还是
+    // 「程序刚建好」），这里建完立刻复位，避免新方案一出生就显示「·已改」。
+    state.presetDirty = false;
+    saveNow();
+    renderArchive();
+    syncTopSelects();
+    toast('已新建空白方案', 'good');
   }
 
   async function loadPreset(p) {

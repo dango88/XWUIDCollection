@@ -421,6 +421,10 @@ _ADAPTER_JS = """
     switchView(state.view);
     // 方案下拉需要在 presets 载入后同步一次（首次 init 时 presets 还是空）
     if (typeof syncTopSelects === 'function') syncTopSelects();
+    // 打开页面即同步矩阵编队（静默，不弹确认框；失败不影响页面可用）
+    if (typeof matrixAutoSync === 'function') {
+      try { await matrixAutoSync(); } catch (e) { /* 同步失败不影响其它功能 */ }
+    }
 
     let saveT = null;
     const postSave = () => {
