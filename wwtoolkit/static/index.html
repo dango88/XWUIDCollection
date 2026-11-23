@@ -1695,6 +1695,27 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
 
   const CHAR_MAP = new Map(CHARS.map((c) => [c.id, c]));
 
+  /* 漂泊者（主角）的各属性 roleId —— 同一角色，切换属性共用体力。
+     id2name 里每个属性有两个 id（男/女主），这里全部收进同一组。 */
+  const ROVER_IDS = ['1309', '1310', '1406', '1408', '1501', '1502', '1604', '1605'];
+
+  /** 面板里拥有的主角 id（没有主角返回 null）。 */
+  function roverOwnedId() {
+    for (const id of ROVER_IDS) if (CHAR_MAP.has(id)) return id;
+    return null;
+  }
+
+  /** 面板里可能只登记了主角的某个属性；其余属性在配队里统一换成这个 id。 */
+  function resolveMemberId(id) {
+    const key = String(id);
+    if (CHAR_MAP.has(key)) return key;
+    if (ROVER_IDS.indexOf(key) >= 0) {
+      const owned = roverOwnedId();
+      if (owned) return owned;
+    }
+    return key;
+  }
+
   const state = {
     view: 'pair',
     teams: [],
@@ -3473,7 +3494,10 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     // 只保留本地有面板数据的成员，但不要因为个别角色缺失就把整支队伍丢掉——
     // 丢队会让「按矩阵原样铺」的序号错位（实测 14 队只剩 13 队）。
     const teams = (data.teams || [])
-      .map((t) => (Object.assign({}, t, { members: t.members.filter((id) => CHAR_MAP.has(id)) })))
+      .map((t) => (Object.assign({}, t, {
+        // 主角多属性 → 统一映射到面板里拥有的那个 id（体力共用）
+        members: t.members.map(resolveMemberId).filter((id) => CHAR_MAP.has(id)),
+      })))
       .filter((t) => t.members.length);
     if (!teams.length) {
       if (!silent) toast('没有可同步的矩阵编队（可能成员未获得）');
@@ -3569,10 +3593,12 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
     box.appendChild(el('p', 'ax-hint', '点击一条编队，自动填入空的队伍格。成员未获得的队伍会灰显。'));
     const list = el('div', 'gp-list');
     teams.forEach((t) => {
-      const allOwned = t.members.every((id) => CHAR_MAP.has(id));
+      // 主角按拥有的那个属性算「已获得」
+      const members = (t.members || []).map(resolveMemberId);
+      const allOwned = members.every((id) => CHAR_MAP.has(id));
       const row = el('div', 'gp-row' + (allOwned ? '' : ' missing'));
       const info = el('div', 'ax-rinfo');
-      const names = t.members.map((id) => (CHAR_MAP.get(id) || {}).name || id);
+      const names = members.map((id) => (CHAR_MAP.get(id) || {}).name || id);
       info.appendChild(el('b', null, `R${t.round} · ${fmt(t.score)} 分`));
       info.appendChild(el('span', null, names.join(' / ')));
       const buffNames = (t.buffs || []).map((bid) => (MATRIX_INFO.buffs.find((b) => b.id === bid) || {}).name).filter(Boolean);
@@ -3586,7 +3612,7 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
           if (row.dataset.busy === '1') return;
           row.dataset.busy = '1';
           // 查重：已存在包含相同成员的编队（成员集合相等，忽略槽位顺序与空槽）就不重复带入
-          const want = t.members.slice(0, SLOT).slice().sort().join(',');
+          const want = members.slice(0, SLOT).slice().sort().join(',');
           const dupTi = state.teams.findIndex((slots) => {
             const cur = slots.filter(Boolean).slice().sort().join(',');
             return cur !== '' && cur === want;
@@ -3617,7 +3643,8 @@ const ROLE_AVATAR={"珂莱塔":"data:image/webp;base64,UklGRkAaAABXRUJQVlA4WAoAA
             snapshot();
           }
           const slots = state.teams[ti];
-          t.members.forEach((id, idx) => {
+          // 用解析后的成员（主角多属性已统一到拥有的那个 id）
+          members.forEach((id, idx) => {
             if (idx >= SLOT) return;
             slots[idx] = id;
           });
